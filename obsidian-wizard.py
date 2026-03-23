@@ -656,8 +656,16 @@ def is_laptop():
 
 
 def start_iwd_service():
-    """Start iwd (Arch) or ensure NetworkManager is running (Gentoo/others)."""
-    if IS_ARCH_LIKE:
+    """Start iwd (systemd) or NetworkManager (OpenRC or no iwd)."""
+    # On OpenRC, always use NetworkManager via rc-service
+    if shutil.which("rc-service"):
+        try:
+            subprocess.run(["rc-service", "NetworkManager", "start"], check=False)
+            time.sleep(2)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    elif shutil.which("iwd") or shutil.which("iwctl"):
         try:
             subprocess.run(["systemctl", "start", "iwd"], check=True)
             time.sleep(2)
@@ -691,7 +699,7 @@ def _get_wifi_interface():
 
 def get_wifi_networks():
     """Scan and return networks. Uses iwctl on Arch, nmcli on Gentoo/others."""
-    if IS_ARCH_LIKE and shutil.which("iwctl"):
+    if shutil.which("iwctl") and shutil.which("iwd") and not shutil.which("rc-service"):
         try:
             iface = "wlan0"
             subprocess.run(["iwctl", "station", iface, "scan"],
@@ -743,7 +751,7 @@ def get_wifi_networks():
 
 def connect_wifi(ssid, password=None):
     """Connect to WiFi. Uses iwctl on Arch, nmcli on Gentoo/others."""
-    if IS_ARCH_LIKE and shutil.which("iwctl"):
+    if shutil.which("iwctl") and shutil.which("iwd") and not shutil.which("rc-service"):
         try:
             if password:
                 result = subprocess.run(
@@ -783,9 +791,9 @@ def wifi_configuration_menu():
         get_key()
         return False
 
-    print_centered("Starting iwd service...", Colors.BRIGHT_CYAN)
+    print_centered("Starting network service...", Colors.BRIGHT_CYAN)
     if not start_iwd_service():
-        print_centered("Failed to start iwd service", Colors.FAIL)
+        print_centered("Failed to start network service", Colors.FAIL)
         print("\n" * 2)
         print_centered("Press any key to continue...", Colors.DIM)
         get_key()
@@ -813,17 +821,51 @@ def wifi_configuration_menu():
         return wifi_configuration_menu()
 
     ssid = choice.split(" (")[0]
-    security = choice.split(" (")[1].rstrip(")")
+    security = choice.split(" (")[1].rstrip(")") if " (" in choice else "Open"
 
     password = None
-    if security == "PSK":
-        clear_screen()
-        draw_header()
-        print("\n" * 2)
-        print_centered(f"Enter password for {ssid}", Colors.BRIGHT_WHITE + Colors.BOLD)
-        print_centered("Password will not be shown as you type", Colors.DIM)
-        print("\n")
-        password = input("Password: ")
+    # Always show password prompt - press Enter to skip for open networks
+    clear_screen()
+    draw_header()
+    print("\n" * 2)
+    print_centered(f"Enter password for {ssid}", Colors.BRIGHT_WHITE + Colors.BOLD)
+    if security.lower() == "open":
+        print_centered("Open network - press Enter to connect without a password", Colors.DIM)
+    else:
+        print_centered(f"Security: {security} - press Enter to skip if no password needed", Colors.DIM)
+    print_centered("Press Tab to toggle show/hide password", Colors.DIM)
+    print("\n")
+    import sys as _sys
+    import tty as _tty
+    import termios as _termios
+    _show_password = False
+    _pwd_chars = []
+    _fd = _sys.stdin.fileno()
+    _old_settings = _termios.tcgetattr(_fd)
+    try:
+        _tty.setraw(_fd)
+        while True:
+            _display = "".join(_pwd_chars) if _show_password else "*" * len(_pwd_chars)
+            _label = "visible" if _show_password else "hidden"
+            _sys.stdout.write(f"\r\033[KPassword ({_label}): {_display}")
+            _sys.stdout.flush()
+            ch = _sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                _sys.stdout.write("\n")
+                break
+            elif ch == "\t":
+                _show_password = not _show_password
+            elif ch in ("\x7f", "\x08"):
+                if _pwd_chars:
+                    _pwd_chars.pop()
+            elif ch == "\x03":
+                _termios.tcsetattr(_fd, _termios.TCSADRAIN, _old_settings)
+                raise KeyboardInterrupt
+            elif ord(ch) >= 32:
+                _pwd_chars.append(ch)
+    finally:
+        _termios.tcsetattr(_fd, _termios.TCSADRAIN, _old_settings)
+    password = "".join(_pwd_chars) if _pwd_chars else None
 
     clear_screen()
     print_centered("Connecting to WiFi...", Colors.BRIGHT_CYAN)
