@@ -86,7 +86,6 @@ DEFAULT_PARTITION_SIZES = {
 }
 
 def _detect_distro():
-    """Return (distro_id, distro_id_like) from /etc/os-release."""
     vals = {}
     for path in ("/etc/os-release", "/usr/lib/os-release"):
         try:
@@ -656,8 +655,6 @@ def is_laptop():
 
 
 def start_iwd_service():
-    """Start iwd (systemd) or NetworkManager (OpenRC or no iwd)."""
-    # On OpenRC, always use NetworkManager via rc-service
     if shutil.which("rc-service"):
         try:
             subprocess.run(["rc-service", "NetworkManager", "start"], check=False)
@@ -682,7 +679,6 @@ def start_iwd_service():
 
 
 def _get_wifi_interface():
-    """Return the first wireless interface name."""
     try:
         result = subprocess.run(
             ["nmcli", "-t", "-f", "DEVICE,TYPE", "device"],
@@ -698,7 +694,6 @@ def _get_wifi_interface():
 
 
 def get_wifi_networks():
-    """Scan and return networks. Uses iwctl on Arch, nmcli on Gentoo/others."""
     if shutil.which("iwctl") and shutil.which("iwd") and not shutil.which("rc-service"):
         try:
             iface = "wlan0"
@@ -723,7 +718,6 @@ def get_wifi_networks():
             pass
         return []
     else:
-        # NetworkManager path (Gentoo, Debian, etc.)
         try:
             iface = _get_wifi_interface()
             subprocess.run(["nmcli", "device", "wifi", "rescan"],
@@ -750,7 +744,6 @@ def get_wifi_networks():
 
 
 def connect_wifi(ssid, password=None):
-    """Connect to WiFi. Uses iwctl on Arch, nmcli on Gentoo/others."""
     if shutil.which("iwctl") and shutil.which("iwd") and not shutil.which("rc-service"):
         try:
             if password:
