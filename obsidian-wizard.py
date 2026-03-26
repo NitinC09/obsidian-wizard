@@ -27,7 +27,8 @@ class Colors:
     BRIGHT_YELLOW = "\033[93m"
 
 
-DEFAULT_MKOBSFS_CONTENT = """
+# Arch-based config template
+DEFAULT_MKOBSFS_CONTENT_ARCH = """
 :<<:
 Packages can be programs or parts of your system.
 $PACKAGES can be thought of as a mega-package in this situation that has everything needed for boot..
@@ -61,6 +62,22 @@ ADMIN_DOTFILES=""
 ADMIN_DOTFILES_TYPE=""
 """
 
+DEFAULT_MKOBSFS_CONTENT_GENTOO = """
+GENTOO_INIT="systemd"
+GENTOO_PREFER_BINHOST="true"
+ACCEPT_LICENSE="*"
+ENABLE_AMDGPU="true"
+ENABLE_NVIDIA=""
+# Add Portage packages below. For a desktop add x11-wm/openbox or kde-plasma/plasma-meta etc.
+PACKAGES="$PACKAGES"
+TIMEZONE=""
+HOSTNAME="obsidian-gentoo"
+SERVICES="NetworkManager"
+ADMIN_USER="user"
+ADMIN_DOTFILES=""
+ADMIN_DOTFILES_TYPE=""
+"""
+
 DEFAULT_PARTITION_SIZES = {
     "esp_size": "512M",
     "rootfs_size": "10G",
@@ -68,13 +85,35 @@ DEFAULT_PARTITION_SIZES = {
     "var_size": "5G",
 }
 
-IS_ARCHISO_REAL = os.path.isfile("/etc/system.sfs")
-IS_ARCHISO = True
-OBSIDIANCTL_PATH = (
-    "obsidianctl"
-    if IS_ARCHISO
-    else (shutil.which("obsidianctl") or "/tmp/obsidianctl/obsidianctl")
+def _detect_distro():
+    vals = {}
+    for path in ("/etc/os-release", "/usr/lib/os-release"):
+        try:
+            with open(path) as f:
+                for line in f:
+                    line = line.strip()
+                    if "=" in line and not line.startswith("#"):
+                        k, _, v = line.partition("=")
+                        vals[k.strip()] = v.strip().strip('"')
+            break
+        except FileNotFoundError:
+            continue
+    return vals.get("ID", "").lower(), vals.get("ID_LIKE", "").lower()
+
+DISTRO_ID, DISTRO_ID_LIKE = _detect_distro()
+IS_ARCH_LIKE   = "arch"   in DISTRO_ID or "arch"   in DISTRO_ID_LIKE
+IS_GENTOO_LIKE = "gentoo" in DISTRO_ID or "gentoo" in DISTRO_ID_LIKE or DISTRO_ID == "obsidian"
+
+# Pick the right template for the running distro
+DEFAULT_MKOBSFS_CONTENT = (
+    DEFAULT_MKOBSFS_CONTENT_GENTOO if IS_GENTOO_LIKE else DEFAULT_MKOBSFS_CONTENT_ARCH
 )
+
+# True when running from a live ISO/USB (system.sfs is the live image)
+IS_ARCHISO_REAL = os.path.isfile("/etc/system.sfs")
+IS_ARCHISO = True  # kept for compatibility
+
+OBSIDIANCTL_PATH = shutil.which("obsidianctl") or "/usr/local/sbin/obsidianctl"
 
 
 def get_current_slots():
@@ -358,7 +397,7 @@ def select_system_image(action_type="install"):
     current_dir_files = []
     try:
         for f in os.listdir("."):
-            if f.endswith(".mkobsfs") or f.endswith(".sfs"):
+            if f.endswith(".mkobsfs") or f.endswith(".mkobsfs-gentoo") or f.endswith(".sfs"):
                 current_dir_files.append(f"[Current Dir] {f}")
     except:
         pass
@@ -391,6 +430,7 @@ def select_system_image(action_type="install"):
         if choice is None:
             return None
 
+        extension = "mkobsfs-gentoo" if IS_GENTOO_LIKE else "mkobsfs"
         if choice.startswith("Default System Image"):
             if confirm(
                 "Use default system image (/etc/system.sfs)?",
@@ -402,7 +442,7 @@ def select_system_image(action_type="install"):
             ):
                 return "/etc/system.sfs"
         elif choice.startswith("Create"):
-            config_file_path = os.path.expanduser("~/config.mkobsfs")
+            config_file_path = os.path.expanduser(f"~/config.{extension}")
             with open(config_file_path, "w") as f:
                 f.write(DEFAULT_MKOBSFS_CONTENT)
             clear_screen()
@@ -615,64 +655,119 @@ def is_laptop():
 
 
 def start_iwd_service():
+    if shutil.which("rc-service"):
+        try:
+            subprocess.run(["rc-service", "NetworkManager", "start"], check=False)
+            time.sleep(2)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    elif shutil.which("iwd") or shutil.which("iwctl"):
+        try:
+            subprocess.run(["systemctl", "start", "iwd"], check=True)
+            time.sleep(2)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    else:
+        try:
+            subprocess.run(["systemctl", "start", "NetworkManager"], check=True)
+            time.sleep(2)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+
+def _get_wifi_interface():
     try:
-        subprocess.run(["systemctl", "start", "iwd"], check=True)
-        time.sleep(2)
-        return True
-    except subprocess.CalledProcessError:
-        return False
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "DEVICE,TYPE", "device"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            dev, _, dtype = line.partition(":")
+            if dtype.strip() == "wifi":
+                return dev.strip()
+    except Exception:
+        pass
+    return "wlan0"
 
 
 def get_wifi_networks():
-    try:
-        result = subprocess.run(
-            ["iwctl", "station", "wlan0", "scan"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        time.sleep(3)
-        result = subprocess.run(
-            ["iwctl", "station", "wlan0", "get-networks"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode == 0:
+    if shutil.which("iwctl") and shutil.which("iwd") and not shutil.which("rc-service"):
+        try:
+            iface = "wlan0"
+            subprocess.run(["iwctl", "station", iface, "scan"],
+                           capture_output=True, text=True, timeout=10)
+            time.sleep(3)
+            result = subprocess.run(
+                ["iwctl", "station", iface, "get-networks"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                networks = []
+                for line in result.stdout.split("\n")[4:]:
+                    if line.strip() and ("PSK" in line or "Open" in line):
+                        parts = line.split()
+                        if parts:
+                            ssid = parts[0]
+                            security = "PSK" if "PSK" in line else "Open"
+                            networks.append(f"{ssid} ({security})")
+                return networks
+        except Exception:
+            pass
+        return []
+    else:
+        try:
+            iface = _get_wifi_interface()
+            subprocess.run(["nmcli", "device", "wifi", "rescan"],
+                           capture_output=True, timeout=8)
+            time.sleep(3)
+            result = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID,SECURITY", "device", "wifi", "list"],
+                capture_output=True, text=True, timeout=10,
+            )
             networks = []
-            lines = result.stdout.split("\n")
-            for line in lines[4:]:
-                if line.strip() and "PSK" in line or "Open" in line:
-                    parts = line.split()
-                    if parts:
-                        ssid = parts[0]
-                        security = "PSK" if "PSK" in line else "Open"
+            seen = set()
+            for line in result.stdout.splitlines():
+                parts = line.split(":")
+                if len(parts) >= 2:
+                    ssid = parts[0].strip()
+                    security = parts[1].strip() or "Open"
+                    if ssid and ssid not in seen:
+                        seen.add(ssid)
                         networks.append(f"{ssid} ({security})")
             return networks
-    except:
-        pass
-    return []
+        except Exception:
+            pass
+        return []
 
 
 def connect_wifi(ssid, password=None):
-    try:
-        if password:
-            result = subprocess.run(
-                ["iwctl", "--password", password, "station", "wlan0", "connect", ssid],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-        else:
-            result = subprocess.run(
-                ["iwctl", "station", "wlan0", "connect", ssid],
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-        return result.returncode == 0
-    except:
-        return False
+    if shutil.which("iwctl") and shutil.which("iwd") and not shutil.which("rc-service"):
+        try:
+            if password:
+                result = subprocess.run(
+                    ["iwctl", "--password", password, "station", "wlan0", "connect", ssid],
+                    capture_output=True, text=True, timeout=15,
+                )
+            else:
+                result = subprocess.run(
+                    ["iwctl", "station", "wlan0", "connect", ssid],
+                    capture_output=True, text=True, timeout=15,
+                )
+            return result.returncode == 0
+        except Exception:
+            return False
+    else:
+        try:
+            cmd = ["nmcli", "device", "wifi", "connect", ssid]
+            if password:
+                cmd += ["password", password]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            return result.returncode == 0
+        except Exception:
+            return False
 
 
 def wifi_configuration_menu():
@@ -689,9 +784,9 @@ def wifi_configuration_menu():
         get_key()
         return False
 
-    print_centered("Starting iwd service...", Colors.BRIGHT_CYAN)
+    print_centered("Starting network service...", Colors.BRIGHT_CYAN)
     if not start_iwd_service():
-        print_centered("Failed to start iwd service", Colors.FAIL)
+        print_centered("Failed to start network service", Colors.FAIL)
         print("\n" * 2)
         print_centered("Press any key to continue...", Colors.DIM)
         get_key()
@@ -719,17 +814,51 @@ def wifi_configuration_menu():
         return wifi_configuration_menu()
 
     ssid = choice.split(" (")[0]
-    security = choice.split(" (")[1].rstrip(")")
+    security = choice.split(" (")[1].rstrip(")") if " (" in choice else "Open"
 
     password = None
-    if security == "PSK":
-        clear_screen()
-        draw_header()
-        print("\n" * 2)
-        print_centered(f"Enter password for {ssid}", Colors.BRIGHT_WHITE + Colors.BOLD)
-        print_centered("Password will not be shown as you type", Colors.DIM)
-        print("\n")
-        password = input("Password: ")
+    # Always show password prompt - press Enter to skip for open networks
+    clear_screen()
+    draw_header()
+    print("\n" * 2)
+    print_centered(f"Enter password for {ssid}", Colors.BRIGHT_WHITE + Colors.BOLD)
+    if security.lower() == "open":
+        print_centered("Open network - press Enter to connect without a password", Colors.DIM)
+    else:
+        print_centered(f"Security: {security} - press Enter to skip if no password needed", Colors.DIM)
+    print_centered("Press Tab to toggle show/hide password", Colors.DIM)
+    print("\n")
+    import sys as _sys
+    import tty as _tty
+    import termios as _termios
+    _show_password = False
+    _pwd_chars = []
+    _fd = _sys.stdin.fileno()
+    _old_settings = _termios.tcgetattr(_fd)
+    try:
+        _tty.setraw(_fd)
+        while True:
+            _display = "".join(_pwd_chars) if _show_password else "*" * len(_pwd_chars)
+            _label = "visible" if _show_password else "hidden"
+            _sys.stdout.write(f"\r\033[KPassword ({_label}): {_display}")
+            _sys.stdout.flush()
+            ch = _sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                _sys.stdout.write("\n")
+                break
+            elif ch == "\t":
+                _show_password = not _show_password
+            elif ch in ("\x7f", "\x08"):
+                if _pwd_chars:
+                    _pwd_chars.pop()
+            elif ch == "\x03":
+                _termios.tcsetattr(_fd, _termios.TCSADRAIN, _old_settings)
+                raise KeyboardInterrupt
+            elif ord(ch) >= 32:
+                _pwd_chars.append(ch)
+    finally:
+        _termios.tcsetattr(_fd, _termios.TCSADRAIN, _old_settings)
+    password = "".join(_pwd_chars) if _pwd_chars else None
 
     clear_screen()
     print_centered("Connecting to WiFi...", Colors.BRIGHT_CYAN)
@@ -985,7 +1114,7 @@ def main():
                 ]
             )
         choice = selection_menu(
-            "ARbs - the ARch image Based inStaller",
+            "ObsidianOS Wizard" if IS_GENTOO_LIKE else "ARbs - the ARch image Based inStaller",
             main_options,
             "What would you like to do?",
         )
@@ -1023,8 +1152,11 @@ def main():
 
 
 if __name__ == "__main__":
+    # Arch live ISOs use a cowspace overlay that needs expanding.
+    # Gentoo live ISOs use dracut dmsquash-live with a tmpfs overlay — no cowspace.
     if (
         IS_ARCHISO
+        and IS_ARCH_LIKE
         and os.path.exists("/run/archiso")
         and not os.path.isfile("/etc/obsidian-wizard-resized")
     ):
@@ -1049,6 +1181,28 @@ if __name__ == "__main__":
             print_centered("REBOOTING...", Colors.FAIL + Colors.BOLD)
             time.sleep(5)
             run_command("sudo reboot", f"Rebooting system due to error {str(e)}...")
+    # Gentoo live ISOs write the stage tarball to /tmp, so expand it to use
+    # most of available RAM to avoid "no space left on device" errors.
+    if IS_GENTOO_LIKE and not os.path.isfile("/etc/obsidian-wizard-resized"):
+        try:
+            clear_screen()
+            run_command(
+                "mount -o remount,size=75% /tmp", "Resizing /tmp tmpfs..."
+            )
+            open("/etc/obsidian-wizard-resized", "w").close()
+        except (KeyboardInterrupt, SystemExit):
+            clear_screen()
+            print_centered(
+                "Resizing aborted. It is probably a good idea to restart your computer.",
+                Colors.WARNING,
+            )
+            time.sleep(0.5)
+        except Exception as e:
+            clear_screen()
+            print_centered("CRITICAL ERROR", Colors.FAIL + Colors.BOLD)
+            print_centered(str(e), Colors.FAIL)
+            print_centered("Please report this bug", Colors.DIM)
+            time.sleep(2)
     try:
         main()
     except (KeyboardInterrupt, SystemExit):
