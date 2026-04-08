@@ -102,7 +102,7 @@ def _detect_distro():
 
 DISTRO_ID, DISTRO_ID_LIKE = _detect_distro()
 IS_ARCH_LIKE   = "arch"   in DISTRO_ID or "arch"   in DISTRO_ID_LIKE
-IS_GENTOO_LIKE = "gentoo" in DISTRO_ID or "gentoo" in DISTRO_ID_LIKE or DISTRO_ID == "obsidian"
+IS_GENTOO_LIKE = "gentoo" in DISTRO_ID or "gentoo" in DISTRO_ID_LIKE
 
 # Pick the right template for the running distro
 DEFAULT_MKOBSFS_CONTENT = (
@@ -110,8 +110,7 @@ DEFAULT_MKOBSFS_CONTENT = (
 )
 
 # True when running from a live ISO/USB (system.sfs is the live image)
-IS_ARCHISO_REAL = os.path.isfile("/etc/system.sfs")
-IS_ARCHISO = True  # kept for compatibility
+IS_ARCHISO = os.path.isfile("/etc/system.sfs")
 
 OBSIDIANCTL_PATH = shutil.which("obsidianctl") or "/usr/local/sbin/obsidianctl"
 
@@ -403,7 +402,7 @@ def select_system_image(action_type="install"):
         pass
 
     options = ["Create New Config"]
-    if IS_ARCHISO_REAL:
+    if IS_ARCHISO:
         options.append("Default System Image")
 
     if mkobsfs_files:
@@ -1104,15 +1103,6 @@ def main():
             "Drop to Terminal",
             "Reboot System",
         ]
-        if not IS_ARCHISO:
-            main_options.extend(
-                [
-                    "Update System",
-                    "Switch Slot and Reboot (temporary)",
-                    "Switch Slot and Reboot (permanent)",
-                    "Sync slots",
-                ]
-            )
         choice = selection_menu(
             "ObsidianOS Wizard" if IS_GENTOO_LIKE else "ARbs - the ARch image Based inStaller",
             main_options,
@@ -1122,21 +1112,6 @@ def main():
             installation_flow("Install")
         elif choice == "Repair ObsidianOS":
             update_flow("Repair")
-        elif choice == "Update System":
-            update_flow("Update")
-        elif choice == "Switch Slot and Reboot (temporary)":
-            run_command(
-                f"{OBSIDIANCTL_PATH} switch-once {NEXT_SLOT}", "Switching slot..."
-            )
-            reboot_system()
-            print_centered("Please reboot to switch slots.")
-        elif choice == "Switch Slot and Reboot (permanent)":
-            run_command(f"{OBSIDIANCTL_PATH} switch {NEXT_SLOT}", "Switching slot...")
-            reboot_system()
-            print_centered("Please reboot to switch slots.")
-        elif choice == "Sync slots":
-            run_command(f"{OBSIDIANCTL_PATH} sync {NEXT_SLOT}", "Syncing slots...")
-            print_centered("Slots synced.")
         elif choice == "Drop to Terminal":
             clear_screen()
             print_centered("Dropping to terminal...", Colors.BRIGHT_GREEN)
@@ -1155,8 +1130,7 @@ if __name__ == "__main__":
     # Arch live ISOs use a cowspace overlay that needs expanding.
     # Gentoo live ISOs use dracut dmsquash-live with a tmpfs overlay — no cowspace.
     if (
-        IS_ARCHISO
-        and IS_ARCH_LIKE
+        IS_ARCH_LIKE
         and os.path.exists("/run/archiso")
         and not os.path.isfile("/etc/obsidian-wizard-resized")
     ):
