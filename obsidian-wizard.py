@@ -101,7 +101,7 @@ def _detect_distro():
     return vals.get("ID", "").lower(), vals.get("ID_LIKE", "").lower()
 
 DISTRO_ID, DISTRO_ID_LIKE = _detect_distro()
-IS_ARCH_LIKE   = "arch"   in DISTRO_ID or "arch"   in DISTRO_ID_LIKE or DISTRO_ID == "obsidian"
+IS_ARCH_LIKE   = "arch"   in DISTRO_ID or "arch"   in DISTRO_ID_LIKE
 IS_GENTOO_LIKE = "gentoo" in DISTRO_ID or "gentoo" in DISTRO_ID_LIKE
 
 # Pick the right template for the running distro
@@ -402,7 +402,7 @@ def select_system_image(action_type="install"):
         pass
 
     options = ["Create New Config"]
-    if _REAL:
+    if IS_ARCHISO:
         options.append("Default System Image")
 
     if mkobsfs_files:
