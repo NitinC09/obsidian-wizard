@@ -1114,7 +1114,10 @@ def reboot_system():
             "The system will boot into the newly installed/updated system",
         ],
     ):
-        run_command("sudo reboot", "Rebooting system")
+        if shutil.which("openrc-shutdown"):
+            run_command("sudo openrc-shutdown -r 5", "Rebooting system")
+        else:    
+            run_command("sudo reboot", "Rebooting system")
 
 
 def main():
