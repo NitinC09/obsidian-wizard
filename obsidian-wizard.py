@@ -1131,7 +1131,7 @@ def reboot_system():
         ],
     ):
         if shutil.which("openrc-shutdown"):
-            run_command("sudo openrc-shutdown -r 5", "Rebooting system")
+            run_command("sudo openrc-shutdown -r now", "Rebooting system")
         else:    
             run_command("sudo reboot", "Rebooting system")
 
