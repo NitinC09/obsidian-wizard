@@ -104,7 +104,7 @@ def _detect_distro():
     d_name_first = name.split()[0] if name else ""
 
     # If on ObsidianOS ISO, detect it via the package manager
-    if "obsidian" in d_id or "obsidian" in d_name_first:
+    if "obsidian" in d_id or "obsidianos" in d_name_first:
         if shutil.which("pacman"):
             d_id = "arch"
         elif shutil.which("emerge"):
