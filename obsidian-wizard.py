@@ -94,7 +94,7 @@ def _detect_distro():
                     line = line.strip()
                     if "=" in line and not line.startswith("#"):
                         k, _, v = line.partition("=")
-                        vals[k.strip()] = v.strip().strip('"')
+                        vals[k.strip()] = v.strip().strip("\"'")
             break
         except FileNotFoundError:
             continue
@@ -103,24 +103,33 @@ def _detect_distro():
     name = vals.get("NAME", "").lower()
     d_name_first = name.split()[0] if name else ""
 
-    # If on ObsidianOS ISO, detect it via the package manager
-    if "obsidian" in d_id or "obsidianos" in d_name_first:
-        if shutil.which("pacman"):
-            d_id = "arch"
-        elif shutil.which("emerge"):
-            d_id = "gentoo"
+    known = ("arch", "gentoo", "void", "alpine", "debian")
+
+    if d_id in known:
+        return d_id, d_name_first
+
+    for like in vals.get("ID_LIKE", "").lower().split():
+        if like in known:
+            return like, d_name_first
+
+    if "obsidian" in d_id or "obsidianos" in d_name_first or not d_id:
+        if shutil.which("emerge"):
+            return "gentoo", d_name_first
         elif shutil.which("xbps-install"):
-            d_id = "void"
+            return "void", d_name_first
         elif shutil.which("apk"):
-            d_id = "alpine"
+            return "alpine", d_name_first
         elif shutil.which("apt-get") or shutil.which("apt") or shutil.which("dpkg"):
-            d_id = "debian"
+            return "debian", d_name_first
+        elif shutil.which("pacman"):
+            return "arch", d_name_first
+
     return d_id, d_name_first
     
 DISTROS = ("arch", "gentoo", "void", "alpine", "debian")
 DISTRO_ID, DISTRO_NAME = _detect_distro()
 
-MATCHED_DISTRO = DISTROS[0]
+MATCHED_DISTRO = DISTRO_ID if DISTRO_ID in DISTROS else DISTROS[0]
 for distro in DISTROS:
     is_match = (distro == DISTRO_ID)
     globals()[f"IS_{distro.upper()}_LIKE"] = is_match
@@ -202,9 +211,12 @@ def print_centered(text, color="", box_style=None):
 
     lines = text.split("\n")
     for line in lines:
-        padding = max(0, (width - len(line)) // 2)
+        # Measure visible length only. ANSI escape sequences (color codes)
+        # don't render as characters but len() counts them, which was
+        # throwing summary lines off-centre when values were colored.
+        visible_len = len(strip_ansi(line))
+        padding = max(0, (width - visible_len) // 2)
         print(" " * padding + color + line + Colors.ENDC)
-
 
 def strip_ansi(text):
     ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
@@ -1198,7 +1210,7 @@ if __name__ == "__main__":
             run_command("sudo reboot", f"Rebooting system due to error {str(e)}...")
     # Gentoo live ISOs write the stage tarball to /tmp, so expand it to use
     # most of available RAM to avoid "no space left on device" errors.
-    if IS_GENTOO_LIKE and not os.path.isfile("/etc/obsidian-wizard-resized"):
+    if not IS_ARCH_LIKE and not os.path.isfile("/etc/obsidian-wizard-resized"):
         try:
             clear_screen()
             run_command(
